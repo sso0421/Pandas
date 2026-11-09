@@ -4,11 +4,24 @@ import scrapy
 from pathlib import Path # 루트폴더 기준으로 경로 주소를 찾아오려고 할 때 사용
 from dotenv import load_dotenv # .env 파일을 읽어오려고 할 때 사용
 from scrapy.http import JsonRequest
+from scrapy.extensions.feedexport import ItemFilter
 
 from wconcept.items import ProductItem, ReviewItem
 
 ENV_PATH = Path(__file__).resolve().parents[2] / ".env"
 load_dotenv(ENV_PATH)
+
+def feed_uri_params(params, spider):
+    params["batch"] = f"{spider.start_rank:03d}_{spider.end_rank:03d}"
+    return params
+
+class ProductItemFilter(ItemFilter):
+    def accepts(self, item):
+        return isinstance(item, ProductItem)
+
+class ReviewItemFilter(ItemFilter):
+    def accepts(self, item):
+        return isinstance(item, ReviewItem)
 
 class ProductsSpider(scrapy.Spider):
     name = "products"
@@ -25,6 +38,17 @@ class ProductsSpider(scrapy.Spider):
     TARGET_COUNT = 20
     REVIEW_LIMIT = 20
     REVIEW_PAGE_SIZE = 20
+
+    def __init__(self, start_rank=1, end_rank=100, *args, **kwargs):
+
+        super().__init__(*args, **kwargs)
+
+        self.start_rank = int(start_rank)
+        self.end_rank = int(end_rank)
+        # 생성자 함수를 통해 신규 기능을 적용하게 되면, 생성자 함수 역시 부모 클래스로부터 값을 상속받아 실행함
+        # 자녀 단계에서 신규 기능 -> 부모 클래스가 상속해 준 기능을 덮어쓰게 되어 있음
+        # 튜플(기본 매개변수 x)과 딕셔너리 형태로 값을 주어야 함
+
 
     API_HEADERS = {
         "accept": "*/*",
@@ -119,8 +143,12 @@ class ProductsSpider(scrapy.Spider):
             print("상품명:", product_data.get("itemName"))
 
             print("판매가격:", product_data.get("salePrice"))
+
+            all_products = content[:self.TARGET_COUNT]
+
+            products = all_products[self.start_rank - 1:self.end_rank]
         
-        for rank, product_data in enumerate(content[:self.TARGET_COUNT], start=1) :
+        for rank, product_data in enumerate(products, start=self.start_rank) :
             
             # print("=" * 40)
 
@@ -306,3 +334,29 @@ class ProductsSpider(scrapy.Spider):
             yield item
             
             self.logger.info(f"[리뷰 저장] product_id={product_id} | review_id={item["review_id"]}")
+
+        @classmethod
+        def update_settinds(cls, settings):
+
+            super().update_settings(settings)
+
+            settings.set(
+                "FEED_URI_PARAMS",
+                feed_uri_params,
+                priority="spider"
+            )
+
+            settings.set(
+                "FEEDS",
+                {
+                    "products_%(batch)s.json":{
+                        "format": "json",
+                        "encoding": "utf-8",
+                        "overwrite":True,
+                        "item_filter": ReviewItemFilter
+                    }
+                },
+                proiorty="spider"
+            )
+
+
